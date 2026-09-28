@@ -1,0 +1,149 @@
+---
+- name: deployment
+  hosts: a
+  tasks:
+
+    - name: update repo
+      apt:
+        update_cache: true
+
+    - name: install depency
+      apt: name={{ item }} state=present
+      with_items:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+      - software-properties-common
+      - sudo
+      - git
+      - make
+      - python3
+      - python3-pip
+      - dos2unix
+
+    - name: install zapi
+      command: pip3 install zapi
+
+    - name: install pyzabbix
+      command: pip3 install pyzabbix
+
+
+    - name: copy useradd script
+      copy:
+        src: /root/ansible/microservice2/useradd.sh
+        dest: /root/useradd.sh
+        mode: 0700
+
+
+    - name: run useradd script
+      shell: sh /root/useradd.sh
+
+    - name: copy python script
+      copy:
+        src: /root/ansible/microservice2/update_zabbix_proxy.py
+        dest: /root/update_zabbix_proxy.py
+        mode: 0700
+
+    - name: copy swap script
+      copy:
+        src: /root/ansible/microservice2/swap.sh
+        dest: /root/swap.sh
+        mode: 0700
+
+    - name: run script swap
+      shell: sh /root/swap.sh
+
+    - name: copy python cruise
+      copy:
+        src: /root/ansible/microservice2/csapi-traveltek-rpc-stats.py
+        dest: /usr/local/bin/csapi-traveltek-rpc-stats.py
+        mode: 0700
+
+
+    - name: grant access for zabbix user
+      copy:
+        src: /root/ansible/microservice2/zabbix
+        dest: /etc/sudoers.d/zabbix
+        mode: 0440
+
+    - name: add docker key
+      become: yes
+      shell: curl -fsSL https://download.docker.com/linux/debian/gpg | sudo apt-key add -
+
+
+
+    - name: Add docker repository
+      become: yes
+      shell: add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/debian $(lsb_release -cs) stable"
+
+
+    - name: update repo
+      apt:
+        update_cache: true
+
+
+
+    - name: install depency
+      apt:
+        name: docker-ce
+        state: present
+
+
+    - name: install pkg
+      apt:
+       name: git
+       state: present
+
+    - name: install pkg
+      apt:
+       name: git
+       state: present
+
+
+    - name: make dir ssh
+      file:
+        path: /root/.ssh
+        state: directory
+        mode: 0700
+
+
+    - name: copy ssh
+      copy:
+        src: id_rsa
+        dest: /root/.ssh/
+        mode: 0600
+
+    - name: git permission
+      copy:
+        src: config
+        dest: /root/.ssh/
+        mode: 0600
+
+    - name: copy script
+      copy:
+        src: git.sh
+        dest: /root/git.sh
+        mode: 700
+
+    - name: run script
+      shell: sh /root/git.sh
+
+    - name: copy app-settings
+      import_tasks: tasks/copy_app.yml
+
+    - name: build
+      import_tasks: tasks/build.yml
+
+
+    - name: delete unwanted images
+      command: docker system prune -f
+
+    - name: Install Cloudwatch agent
+      shell: |
+        wget https://s3.amazonaws.com/amazoncloudwatch-agent/debian/amd64/latest/amazon-cloudwatch-agent.deb
+        apt install -y ./amazon-cloudwatch-agent.deb
+        mkdir -p /usr/share/collectd/
+        touch /usr/share/collectd/types.db
+        /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c ssm:AmazonCloudWatch-mos-microservice-agent-conf

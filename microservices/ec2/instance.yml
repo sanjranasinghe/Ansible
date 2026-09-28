@@ -1,0 +1,48 @@
+---
+- hosts: localhost
+  connection: local
+  tasks:
+
+   - name: launcing AWS
+     ec2:
+       instance_type: t3.xlarge
+       key_name: sanjaya
+       image: '{{ image }}'
+       region: eu-west-2
+       group:  allow-local-ssh
+       count: 1
+       volumes:
+       - device_name: /dev/xvda
+         volume_type: gp2
+         volume_size: 40
+         delete_on_termination: yes
+       vpc_subnet_id: subnet-03e49d56fe3d6eaf3
+       instance_profile_name: 'ec2-cloudwatch-agent-admin-role'
+       wait: yes
+       #assign_public_ip: yes
+       instance_tags:
+         Name: MOS-MICROSERVICE-Build
+         COSTCENTER: MOS-MICROSERVICE
+     register: ec2
+
+
+
+   - name: print the ami
+     debug:
+       msg: "the ami is {{ ec2 }}"
+
+
+   - name: save result
+     local_action:  copy content={{ ec2 }} dest=/root/ansible/microservice/text
+
+
+   - name: get ip
+     shell: cat /root/ansible/microservice/text | cut -b 144-155 | sed 's/\"//g' >  /root/ansible/microservice2/hosts
+
+
+   - name: edit hosts file
+     shell: sh /root/ansible/microservice/host.sh
+
+
+   - name: add new instance_id
+     shell: sh /root/ansible/microservice/instance.sh

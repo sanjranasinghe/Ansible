@@ -1,0 +1,131 @@
+- name: aws
+  hosts: localhost
+  connection: local
+  tasks:
+
+
+    - name: Basic AMI Creation
+      amazon.aws.ec2_ami:
+        instance_id: i-053827fab6b313b2f
+        wait: yes
+        wait_timeout: 1800
+        name: MOS-Microservices-v{{ version }}
+        region: eu-west-2
+        tags:
+          Name: MOS-Microservices-ami-v{{ version }}
+          Service: MOS-Microservices
+      register: ami
+
+    - name: print the ami
+      debug:
+        msg: "the ami is {{ ami }}"
+
+
+    - name: create launch config
+      ec2_lc:
+        name: LC-MOS-Microservices-V{{ version }}
+        image_id: "{{ ami.image_id }}"
+        key_name: sanjaya
+        region: eu-west-2
+        security_groups: ['sg-0207e525604133859','sg-07569e04e3bbfedf4']
+        instance_type: c5.xlarge
+        assign_public_ip: no
+        spot_price: 0.18
+        user_data_path: /root/ansible/deployment/zabbix
+
+
+
+    - ec2_asg:
+        name: ASG-MOS-Microservices-V{{ version }}
+        launch_config_name : LC-MOS-Microservices-V{{ version }}
+        health_check_period: 60
+        health_check_type: EC2
+        target_group_arns: "{{ flight.target_group_arn }}"
+        replace_all_instances: yes
+        availability_zones: [ 'eu-west-2a', 'eu-west-2b' ]
+        min_size: 2
+        max_size: 10
+        vpc_zone_identifier: [ subnet-03e49d56fe3d6eaf3,subnet-02a6dea040364ce31 ]
+        desired_capacity: 2
+        tags:
+         - Name: MOS-Microservices-V{{ version }}
+           propagate_at_launch: no
+        region: eu-west-2
+      register: asg_result
+
+
+    - name: Configure Scaling Policies
+      ec2_scaling_policy:
+        region: eu-west-2
+        name: "{{ item.name }}"
+        asg_name: ASG-MOS-Microservices-V{{ version }}
+        state: present
+        adjustment_type: "{{ item.adjustment_type }}"
+        min_adjustment_step: "{{ item.min_adjustment_step }}"
+        scaling_adjustment: "{{ item.scaling_adjustment }}"
+        cooldown: "{{ item.cooldown }}"
+      with_items:
+        - name: "Increase Group Size"
+          adjustment_type: "ChangeInCapacity"
+          scaling_adjustment: +2
+          min_adjustment_step: 1
+          cooldown: 150
+        - name: "Decrease Group Size"
+          adjustment_type: "ChangeInCapacity"
+          scaling_adjustment: -1
+          min_adjustment_step: 1
+          cooldown: 300
+      register: sp_result
+
+
+    -  name: Configure Metric Alarms and link to Scaling Policies
+       ec2_metric_alarm:
+         region: "eu-west-2"
+         name: "{{ item.name }}"
+         state: present
+         metric: "CPUUtilization"
+         namespace: "AWS/EC2"
+         statistic: "Average"
+         comparison: "{{ item.comparison }}"
+         threshold: "{{ item.threshold }}"
+         period: 60
+         evaluation_periods: 2
+         unit: "Percent"
+         description: "This will recover an instance when it fails"
+         dimensions:
+           AutoScalingGroupName: "{{ asg_result.AutoScalingGroupName }}"
+         alarm_actions: "{{ item.alarm_actions }}"
+       with_items:
+         - name: "{{ asg_result.AutoScalingGroupName }}-ScaleUp"
+           comparison: ">="
+           threshold: 60.0
+           alarm_actions:
+             - "{{ sp_result.results[0].arn }}"
+
+
+    - name: Configure Metric Alarms and link to Scaling Policies
+      ec2_metric_alarm:
+        region: "eu-west-2"
+        name: "{{ item.name }}"
+        state: present
+        metric: "CPUUtilization"
+        namespace: "AWS/EC2"
+        statistic: "Average"
+        comparison: "{{ item.comparison }}"
+        threshold: "{{ item.threshold }}"
+        period: 300
+        evaluation_periods: 5
+        unit: "Percent"
+        description: "This will recover an instance when it fails"
+        dimensions:
+          AutoScalingGroupName: "{{ asg_result.AutoScalingGroupName }}"
+        alarm_actions: "{{ item.alarm_actions }}"
+      with_items:
+        - name: "{{ asg_result.AutoScalingGroupName }}-ScaleDown"
+          comparison: "<="
+          threshold: 30.0
+          alarm_actions:
+            - "{{ sp_result.results[1].arn }}"
+
+
+
